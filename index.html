@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>2D Board Game</title>
+<style>
+  canvas {
+    border: 2px solid black;
+    display: block;
+    margin: 20px auto;
+    background-color: #999;
+  }
+  body {
+    text-align: center;
+    font-family: Arial, sans-serif;
+  }
+  #modeSelect {
+    margin-top: 20px;
+  }
+  button {
+    font-size: 18px;
+    padding: 10px 20px;
+    margin: 0 10px;
+    cursor: pointer;
+  }
+  #gameOverScreen {
+    position: fixed;
+    top:0; left:0; width:100%; height:100%;
+    background: rgba(0,0,0,0.75);
+    color: white;
+    font-size: 28px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    display: none;
+  }
+  #gameOverScreen button {
+    margin-top: 20px;
+    font-size: 22px;
+  }
+</style>
+</head>
+<body>
+
+<h1>2D Board Game</h1>
+
+<div id="modeSelect">
+  <button id="twoPlayerBtn">Two Player</button>
+  <button id="aiPlayerBtn">Play vs Robot</button>
+  <button id="onlinePlayBtn">Play online</button>
+</div>
+
+<canvas id="gameCanvas" width="600" height="1000" style="display:none;"></canvas>
+
+<div id="gameOverScreen">
+  <div id="winnerText"></div>
+  <button id="restartBtn">Restart</button>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+const COLS = 6;   // width
+const ROWS = 10;  // height
+const TILE_SIZE = 100;
+
+let selectedPiece = null;
+let currentPlayer = 'x'; // 'x' or 'o'
+let pieces = [];
+const miniGridRows = 3;
+const miniGridCols = 3;
+let gameOver = false;
+
+let aiEnabled = false;
+let humanPlayer = null; // 'x' or 'o'
+
+const centerX = 2 * TILE_SIZE;
+const centerY = 4 * TILE_SIZE;
+const miniSize = 2 * TILE_SIZE;
+const cellSize = miniSize / 3;
+
+// Initialize pieces with correct starting positions (hopper at row 1, col 2)
+function initPieces() {
+  pieces = [];
+
+  // Tickers (6 each) on second row (row 1 for top player 'x', row 8 for 'o')
+  
+  for (let i = 0; i < 6; i++) {
+     {
+     
+    } {
+      pieces.push({type: 'ticker', player: 'x', row: 1, col: i, inCenter: false});
+      pieces.push({type: 'ticker', player: 'o', row: 8, col: i, inCenter: false});
+    
+    }
+  }
+
+   // Hopper (1 each) row 0
+  pieces.push({type: 'hopper', player: 'x', row: 0, col: 1, inCenter: false});
+  pieces.push({type: 'hopper', player: 'o', row: 9, col: 1, inCenter: false})
+
+  // Guards (2 each) - placed on opposite side of their pieces protecting center grid
+  // For 'x' guards at row 6 (below center grid)
+  pieces.push({type: 'guard', player: 'x', row: 6, col: 2});
+  pieces.push({type: 'guard', player: 'x', row: 6, col: 3});
+  // For 'o' guards at row 3 (above center grid)
+  pieces.push({type: 'guard', player: 'o', row: 3, col: 2});
+  pieces.push({type: 'guard', player: 'o', row: 3, col: 3});
+
+  // Eliminators (2 each) on ends of first row (row 0 for 'x', row 9 for 'o')
+  pieces.push({type: 'eliminator', player: 'x', row: 0, col: 0});
+  pieces.push({type: 'eliminator', player: 'x', row: 0, col: 5});
+  pieces.push({type: 'eliminator', player: 'o', row: 9, col: 0});
+  pieces.push({type: 'eliminator', player: 'o', row: 9, col: 5});
+
+  // Flyers (2 each) line up on opposite sides of king on first row
+  pieces.push({type: 'flyer', player: 'x', row: 0, col: 2});
+  pieces.push({type: 'flyer', player: 'x', row: 0, col: 4});
+  pieces.push({type: 'flyer', player: 'o', row: 9, col: 2});
+  pieces.push({type: 'flyer', player: 'o', row: 9, col: 4});
+
+  // King (1 each) at 4th column first row (col 3, row 0 or 9)
+  pieces.push({type: 'king', player: 'x', row: 0, col: 3});
+  pieces.push({type: 'king', player: 'o', row: 9, col: 3});
+}
+
+initPieces();
+
+function drawBoard() {
+  for(let r=0; r<ROWS; r++) {
+    for(let c=0; c<COLS; c++) {
+      if((r >=4 && r <=5) && (c >=2 && c <=3)) continue;
+      ctx.fillStyle = ((r+c) % 2 === 0) ? '#eee' : '#bbb';
+      ctx.fillRect(c*TILE_SIZE, r*TILE_SIZE, TILE_SIZE, TILE_SIZE);
+    }
+  }
+  ctx.fillStyle = 'white';
+  ctx.fillRect(centerX, centerY, miniSize, miniSize);
+
+  ctx.strokeStyle = 'black';
+  ctx.lineWidth = 3;
+
+  for(let i=1; i<=2; i++) {
+    ctx.beginPath();
+    ctx.moveTo(centerX + i*cellSize, centerY);
+    ctx.lineTo(centerX + i*cellSize, centerY + miniSize);
+    ctx.stroke();
+  }
+  for(let i=1; i<=2; i++) {
+    ctx.beginPath();
+    ctx.moveTo(centerX, centerY + i*cellSize);
+    ctx.lineTo(centerX + miniSize, centerY + i*cellSize);
+    ctx.stroke();
+  }
+}
+
+function drawPiece(piece) {
+  let x, y;
+  if(piece.type === 'ticker' && piece.inCenter) {
+    x = centerX + piece.centerCol * cellSize + cellSize / 2;
+    y = centerY + piece.centerRow * cellSize + cellSize / 2;
+  } else {
+    x = piece.col * TILE_SIZE + TILE_SIZE / 2;
+    y = piece.row * TILE_SIZE + TILE_SIZE / 2;
+  }
+
+  ctx.font = '48px Arial';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  let symbol = '';
+  switch(piece.type) {
+    case 'ticker': symbol = piece.player.toUpperCase(); break;
+    case 'guard': symbol = 'G'; break;
+    case 'eliminator': symbol = 'E'; break;
+    case 'flyer': symbol = 'F'; break;
+    case 'king': symbol = 'K'; break;
+    case 'hopper': symbol = 'H'; break;
+  }
+
+  ctx.fillStyle = piece.player === 'x' ? 'blue' : 'red';
+  ctx.fillText(symbol, x, y);
+
+  if(selectedPiece === piece) {
+    ctx.strokeStyle = 'gold';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(x, y, TILE_SIZE/3, 0, Math.PI*2);
+    ctx.stroke();
+  }
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawBoard();
+  pieces.forEach(drawPiece);
+}
+
+function pieceAt(row, col) {
+  return pieces.find(p => !p.inCenter && p.row === row && p.col === col);
+}
+
+function centerPieceAt(centerRow, centerCol) {
+  return pieces.find(p => p.inCenter && p.centerRow === centerRow && p.centerCol === centerCol);
+}
+
+function isOpponent(piece, player) {
+  return piece && piece.player !== player;
+}
+
+function removePiece(piece) {
+  const idx = pieces.indexOf(piece);
+  if(idx !== -1) pieces.splice(idx, 1);
+}
+
+function checkTicTacToeWinner() {
+  // Check 3x3 center grid for winner on 'tickers' only
+  const grid = Array(3).fill(null).map(() => Array(3).fill(null));
+  pieces.forEach(p => {
+    if(p.type === 'ticker' && p.inCenter) {
+      grid[p.centerRow][p.centerCol] = p.player;
+    }
+  });
+
+  const lines = [
+    // rows
+    [[0,0],[0,1],[0,2]],
+    [[1,0],[1,1],[1,2]],
+    [[2,0],[2,1],[2,2]],
+    // cols
+    [[0,0],[1,0],[2,0]],
+    [[0,1],[1,1],[2,1]],
+    [[0,2],[1,2],[2,2]],
+    // diagonals
+    [[0,0],[1,1],[2,2]],
+    [[0,2],[1,1],[2,0]],
+  ];
+
+  for(let line of lines) {
+    const [a,b,c] = line;
+    if(grid[a[0]][a[1]] && grid[a[0]][a[1]] === grid[b[0]][b[1]] && grid[a[0]][a[1]] === grid[c[0]][c[1]]) {
+      return grid[a[0]][a[1]];
+    }
+  }
+  return null;
+}
+
+// Returns legal moves for given piece
+function legalMoves(piece) {
+  let moves = [];
+
+  // Helper: check if a position is inside center big grid (rows 4-5, cols 2-3)
+  function inCenterGrid(r, c) {
+    return r >= 4 && r <= 5 && c >= 2 && c <= 3;
+  }
+
+  if(piece.type === 'ticker') {
+    if(piece.inCenter) {
+      // Move 1 step inside mini grid to empty squares
+      for(let dr=-1; dr<=1; dr++) {
+        for(let dc=-1; dc<=1; dc++) {
+          if(dr === 0 && dc === 0) continue;
+          const nr = piece.centerRow + dr;
+          const nc = piece.centerCol + dc;
+          if(nr >=0 && nr <3 && nc >=0 && nc <3) {
+            if(!centerPieceAt(nr,nc)) moves.push({inCenter: true, centerRow: nr, centerCol: nc});
+          }
+        }
+      }
+    } else {
+      // Move 1 square any direction if empty
+      for(let dr=-1; dr<=1; dr++) {
+        for(let dc=-1; dc<=1; dc++) {
+          if(dr === 0 && dc === 0) continue;
+          const nr = piece.row + dr;
+          const nc = piece.col + dc;
+          if(nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS) {
+            if(!pieceAt(nr,nc)) {
+              // If move into center big square, player can pick any empty mini square instead of normal square
+              if(inCenterGrid(nr, nc)) {
+                moves.push({inCenterEntry: true});
+              } else {
+                moves.push({row: nr, col: nc});
+              }
+            }
+          }
+        }
+      }
+    }
+  } else {
+    // For all other pieces, they cannot move into or through center grid
+    // So no moves into or across rows 4-5 and cols 2-3
+
+    if(piece.type === 'guard') {
+      // Guard can't move unless enemy piece in 1 square radius, then can move/take enemy pieces in 1 square radius
+      let enemyNearby = false;
+      for(let dr=-1; dr<=1; dr++) {
+        for(let dc=-1; dc<=1; dc++) {
+          if(dr === 0 && dc === 0) continue;
+          const nr = piece.row + dr;
+          const nc = piece.col + dc;
+          if(nr >=0 && nr < ROWS && nc >=0 && nc < COLS) {
+            if(inCenterGrid(nr, nc)) continue;  // can't move into center grid
+            const p = pieceAt(nr, nc);
+            if(p && isOpponent(p, piece.player)) {
+              enemyNearby = true;
+              break;
+            }
+          }
+        }
+        if(enemyNearby) break;
+      }
+      if(enemyNearby) {
+        // Can move/take enemy pieces 1 square away, except into center grid
+        for(let dr=-1; dr<=1; dr++) {
+          for(let dc=-1; dc<=1; dc++) {
+            if(dr === 0 && dc === 0) continue;
+            const nr = piece.row + dr;
+            const nc = piece.col + dc;
+            if(nr >=0 && nr < ROWS && nc >=0 && nc < COLS && !inCenterGrid(nr, nc)) {
+              const target = pieceAt(nr, nc);
+              if(!target || (isOpponent(target, piece.player) && target.type !== 'flyer')) {
+                moves.push({row: nr, col: nc, take: target || null});
+              }
+            }
+          }
+        }
+      }
+    }
+    else if(piece.type === 'eliminator') {
+      // Move up to 3 squares in any straight or diagonal direction, cannot enter center grid
+      for(let dr=-3; dr<=3; dr++) {
+        for(let dc=-3; dc<=3; dc++) {
+          if(dr === 0 && dc === 0) continue;
+          if(Math.abs(dr) !== Math.abs(dc) && dr !== 0 && dc !== 0) continue; // only straight or diagonal
+          let stepCount = Math.max(Math.abs(dr), Math.abs(dc));
+          let pathClear = true;
+          let pathCells = [];
+          for(let step=1; step<=stepCount; step++) {
+            let nr = piece.row + Math.sign(dr)*step;
+            let nc = piece.col + Math.sign(dc)*step;
+            if(nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS) {
+              pathClear = false;
+              break;
+            }
+            if(inCenterGrid(nr, nc)) {
+              // path crosses center grid => invalid move
+              pathClear = false;
+              break;
+            }
+            pathCells.push([nr,nc]);
+            if(step < stepCount && pieceAt(nr, nc)) {
+              // blocked path before final step
+              pathClear = false;
+              break;
+            }
+          }
+          if(pathClear) {
+            let target = pieceAt(piece.row + dr, piece.col + dc);
+            if(!target || (isOpponent(target, piece.player) && target.type !== 'flyer')) {
+              moves.push({row: piece.row + dr, col: piece.col + dc, take: target || null});
+            }
+          }
+        }
+      }
+    }
+    else if(piece.type === 'flyer') {
+      // Flyers can move anywhere except inside center grid (can't enter center grid squares)
+      for(let r=0; r<ROWS; r++) {
+        for(let c=0; c<COLS; c++) {
+          if(inCenterGrid(r, c)) continue;
+          if(!pieceAt(r,c)) {
+            moves.push({row: r, col: c});
+          }
+        }
+      }
+    }
+    else if(piece.type === 'king') {
+      // Move 1 square any direction, cannot move into center grid
+      for(let dr=-1; dr<=1; dr++) {
+        for(let dc=-1; dc<=1; dc++) {
+          if(dr === 0 && dc === 0) continue;
+          const nr = piece.row + dr;
+          const nc = piece.col + dc;
+          if(nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS && !inCenterGrid(nr, nc)) {
+            const target = pieceAt(nr, nc);
+            if(!target || (isOpponent(target, piece.player) && target.type !== 'flyer')) {
+              moves.push({row: nr, col: nc, take: target || null});
+            }
+          }
+        }
+      }
+    }
+    else if(piece.type === 'hopper') {
+      // Hopper hops over pieces or empty squares to the second square in each direction
+      // Capture only if hopping over opponent piece (except flyer)
+      // Cannot hop into or over center grid squares
+      const directions = [
+        [-1, 0], [1, 0], [0, -1], [0, 1],      // up, down, left, right
+        [-1, -1], [-1, 1], [1, -1], [1, 1]     // diagonals
+      ];
+
+      for (let [dr, dc] of directions) {
+        let nr = piece.row + dr;
+        let nc = piece.col + dc;
+        if(nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS) continue;
+        if(inCenterGrid(nr, nc)) continue; // cannot hop over center grid
+
+        let jumped = pieceAt(nr, nc);
+        let lr = nr + dr;
+        let lc = nc + dc;
+        if(lr < 0 || lr >= ROWS || lc < 0 || lc >= COLS) continue;
+        if(inCenterGrid(lr, lc)) continue; // cannot land in center grid
+
+        let landing = pieceAt(lr, lc);
+        if(landing && landing.player === piece.player) {
+          // Can't land on friendly piece
+          continue;
+        }
+
+        if(!jumped) {
+          // Hop over empty square (no capture)
+          if(!landing) {
+            moves.push({row: lr, col: lc, take: null});
+          }
+        } else if(jumped.player !== piece.player && jumped.type !== 'flyer') {
+          // Hop over opponent piece (capture)
+          if(!landing || landing.player !== piece.player) {
+            moves.push({row: lr, col: lc, take: jumped});
+          }
+        }
+      }
+    }
+  }
+  return moves;
+}
+
+
+function movePiece(piece, move) {
+  // If tickers entering center, let player pick square (for now move to random empty in center)
+  if(move.inCenterEntry) {
+    // For tickers moving into center grid from outside, allow to pick any empty center spot
+    // For simplicity, here we place to first empty cell
+    for(let r=0; r<3; r++) {
+      for(let c=0; c<3; c++) {
+        if(!centerPieceAt(r,c)) {
+          piece.inCenter = true;
+          piece.centerRow = r;
+          piece.centerCol = c;
+          piece.row = null;
+          piece.col = null;
+          return;
+        }
+      }
+    }
+    return; // no moves possible
+  }
+  if(piece.inCenter) {
+    piece.centerRow = move.centerRow;
+    piece.centerCol = move.centerCol;
+  } else {
+    piece.row = move.row;
+    piece.col = move.col;
+  }
+  if(move.take) {
+    removePiece(move.take);
+  }
+}
+
+function distance(r1, c1, r2, c2) {
+  return Math.max(Math.abs(r1-r2), Math.abs(c1-c2));
+}
+
+function guardCanMove(piece) {
+  // Guard can move only if enemy piece in 1 square radius
+  for(let dr=-1; dr<=1; dr++) {
+    for(let dc=-1; dc<=1; dc++) {
+      if(dr===0 && dc===0) continue;
+      let nr = piece.row + dr;
+      let nc = piece.col + dc;
+      if(nr<0 || nr>=ROWS || nc<0 || nc>=COLS) continue;
+      let p = pieceAt(nr,nc);
+      if(p && p.player !== piece.player) return true;
+    }
+  }
+  return false;
+}
+
+// Select a piece by click or AI
+function selectPiece(piece) {
+  if(piece.player === currentPlayer) {
+    selectedPiece = piece;
+    draw();
+  }
+}
+
+function endTurn() {
+  let winner = checkTicTacToeWinner();
+  if(winner) {
+    gameOver = true;
+    showGameOver(winner);
+    return;
+  }
+  currentPlayer = currentPlayer === 'x' ? 'o' : 'x';
+  selectedPiece = null;
+  draw();
+  if(aiEnabled && currentPlayer === humanPlayer) {
+    setTimeout(aiMove, 400);
+  }
+}
+
+function showGameOver(winner) {
+  document.getElementById('winnerText').innerText = `Player ${winner.toUpperCase()} wins!`;
+  document.getElementById('gameOverScreen').style.display = 'flex';
+}
+
+canvas.addEventListener('click', (e) => {
+  if(gameOver) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const xClick = e.clientX - rect.left;
+  const yClick = e.clientY - rect.top;
+
+  // check center grid first
+  if(selectedPiece && selectedPiece.type === 'ticker' && !selectedPiece.inCenter) {
+    // Check if clicked inside center grid to move there (one square radius)
+    if(xClick >= centerX && xClick <= centerX + miniSize && yClick >= centerY && yClick <= centerY + miniSize) {
+      const c = Math.floor((xClick - centerX) / cellSize);
+      const r = Math.floor((yClick - centerY) / cellSize);
+      if(!centerPieceAt(r,c)) {
+        // Must be in 1 square radius from selectedPiece current position
+        if(distance(selectedPiece.row, selectedPiece.col, 4, 2) <= 1 || distance(selectedPiece.row, selectedPiece.col, 5, 3) <= 1) {
+          selectedPiece.inCenter = true;
+          selectedPiece.centerRow = r;
+          selectedPiece.centerCol = c;
+          selectedPiece.row = null;
+          selectedPiece.col = null;
+          endTurn();
+          return;
+        }
+      }
+    }
+  }
+
+  // clicked on board squares
+  const col = Math.floor(xClick / TILE_SIZE);
+  const row = Math.floor(yClick / TILE_SIZE);
+
+  // Check if clicked own piece
+  let clickedPiece = pieces.find(p => !p.inCenter && p.row === row && p.col === col && p.player === currentPlayer);
+
+  if(clickedPiece) {
+    selectPiece(clickedPiece);
+    return;
+  }
+
+  if(selectedPiece) {
+    // Check if move valid
+    let moves = legalMoves(selectedPiece);
+    let chosenMove = null;
+    for(let m of moves) {
+      if(m.inCenterEntry) continue;
+      if(m.inCenter) {
+        if(row === null && col === null) continue;
+      }
+      if(m.row === row && m.col === col) {
+        chosenMove = m;
+        break;
+      }
+    }
+    if(chosenMove) {
+      movePiece(selectedPiece, chosenMove);
+      endTurn();
+    }
+  }
+});
+
+function aiMove() {
+  if (gameOver) return;
+
+  let candidates = pieces.filter(p => p.player === currentPlayer);
+
+  let bestCapture = null;
+  let bestTickerEntry = null;
+  let bestTickerAdvance = null;
+  let bestKingAdvance = null;
+
+  const centerTargetRow = 4.5;
+  const centerTargetCol = 2.5;
+  const endRow = currentPlayer === 'x' ? 9 : 0;
+
+  for (let p of candidates) {
+    let moves = legalMoves(p);
+    if (!moves.length) continue;
+
+    for (let move of moves) {
+      // Priority 1: Captures (excluding flyers)
+      if (move.take && move.take.type !== 'flyer') {
+        if (!bestCapture) bestCapture = { piece: p, move };
+      }
+
+      // Priority 2: Ticker entering center
+      if (p.type === 'ticker' && move.inCenterEntry) {
+        if (!bestTickerEntry) bestTickerEntry = { piece: p, move };
+      }
+
+      // Priority 3: Ticker advancing toward center
+      if (p.type === 'ticker' && !p.inCenter && move.row !== undefined) {
+        const distBefore = distance(p.row, p.col, centerTargetRow, centerTargetCol);
+        const distAfter = distance(move.row, move.col, centerTargetRow, centerTargetCol);
+        if (distAfter < distBefore) {
+          if (!bestTickerAdvance || distAfter < distance(bestTickerAdvance.move.row, bestTickerAdvance.move.col, centerTargetRow, centerTargetCol)) {
+            bestTickerAdvance = { piece: p, move };
+          }
+        }
+      }
+
+      // Priority 4: Move king toward enemy’s end row
+      if (p.type === 'king' && move.row !== undefined) {
+        const distBefore = Math.abs(p.row - endRow);
+        const distAfter = Math.abs(move.row - endRow);
+        if (distAfter < distBefore) {
+          if (!bestKingAdvance || distAfter < Math.abs(bestKingAdvance.move.row - endRow)) {
+            bestKingAdvance = { piece: p, move };
+          }
+        }
+      }
+    }
+  }
+
+  let action =
+    bestCapture ||
+    bestTickerEntry ||
+    bestTickerAdvance ||
+    bestKingAdvance;
+
+  if (action) {
+    movePiece(action.piece, action.move);
+  }
+
+  endTurn();
+}
+
+
+
+
+// Mode selection and game start
+document.getElementById('twoPlayerBtn').onclick = () => {
+  aiEnabled = false;
+  humanPlayer = null;
+  startGame();
+};
+document.getElementById('aiPlayerBtn').onclick = () => {
+  aiEnabled = true;
+  humanPlayer = Math.random() < 0.5 ? 'x' : 'o';
+  alert(`You are player ${humanPlayer.toUpperCase()}`);
+  startGame();
+};
+
+document.getElementById('restartBtn').onclick = () => {
+  document.getElementById('gameOverScreen').style.display = 'none';
+  startGame();
+};
+
+function startGame() {
+  gameOver = false;
+  currentPlayer = 'x';
+  selectedPiece = null;
+  initPieces();
+  document.getElementById('modeSelect').style.display = 'none';
+  canvas.style.display = 'block';
+  draw();
+  if(aiEnabled && currentPlayer !== humanPlayer) {
+    setTimeout(aiMove, 400);
+  }
+}
+
+</script>
+</body>
+</html>
+
+
+
+
+
+
+
+
